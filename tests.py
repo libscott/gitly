@@ -48,11 +48,18 @@ class TestTree(unittest.TestCase):
                          str(newtree.oid))
 
     def test_set_subdir(self):
-        tree1 = Tree(self.repo)
-        tree1 = tree1.set('a/b', '1')
-        tree2 = Tree(self.repo)
-        subtree = Tree(self.repo).set('b', '1')
-        tree2.set('a', subtree)
+        tree = (Tree(self.repo)
+                .set('a/b/c', '1')
+                .set('a/c/d', '2')
+                .set('a/c/b', '3'))
+        self.assertEqual({'a': {'b': {'c': '1'}, 'c': {'b': '3', 'd': '2'}}},
+                         dump_tree(tree))
+
+
+def dump_tree(val):
+    if type(val) == Tree:
+        return {k: dump_tree(val[k]) for k in sorted(val)}
+    return val
 
 
 if __name__ == '__main__':
