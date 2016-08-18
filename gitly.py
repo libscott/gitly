@@ -31,7 +31,7 @@ EMPTY = object()
 class Tree(object):
     def __init__(self, repo, pygit2_tree=None):
         self.repo = repo
-        if pygit2_tree == None:
+        if pygit2_tree is None:
             pygit2_tree = empty_tree(repo)
         self._tree = pygit2_tree
         self.oid = pygit2_tree.oid.hex
@@ -39,10 +39,16 @@ class Tree(object):
     _ERROR = object()
 
     def get(self, path, default=_ERROR):
-        parts = path.strip('/').split('/')
-        return reduce(lambda t, p: t._get(p, default), parts, self)
+        out = self
+        for part in path.strip('/').split('/'):
+            out = out._get(part)
+            if out == Tree._ERROR:
+                if default == Tree._ERROR:
+                    raise KeyError(path)
+                return default
+        return out
 
-    def _get(self, path, default=_ERROR):
+    def _get(self, path):
         if path in self._tree:
             entry = self._tree[path]
             if entry.filemode == pygit2.GIT_FILEMODE_BLOB:
@@ -51,11 +57,17 @@ class Tree(object):
             elif entry.filemode == pygit2.GIT_FILEMODE_TREE:
                 tree = self.repo.get(entry.oid)
                 return Tree(self.repo, tree)
-        if default is self._ERROR:
-            raise KeyError(path)
-        return default
+        return Tree._ERROR
 
     __getitem__ = get
+
+    def object_id(self, path):
+        tree = self._tree
+        parts = path.rsplit('/', 2)
+        basename = parts.pop()
+        if parts:
+            tree = self.get(parts[0])._tree
+        return tree[basename].oid
 
     def subtree(self, path):
         entry = self._tree[path]
@@ -81,11 +93,12 @@ class Tree(object):
         if parts:
             data = self.subtree_or_empty(key).set(parts[0], data)
 
-        builder = self.repo.TreeBuilder(self.oid)
-
         if data == EMPTY:
             data = empty_tree(self.repo)
-        if data == None:
+
+        builder = self.repo.TreeBuilder(self.oid)
+
+        if data is None:
             builder.remove(path)
         elif type(data) in (Tree, pygit2.Tree):
             builder.insert(key, data.oid, pygit2.GIT_FILEMODE_TREE)
@@ -97,7 +110,7 @@ class Tree(object):
         return Tree(self.repo, tree)
 
     def __contains__(self, path):
-        return path in self._tree
+        return self.get(path, self) is not self
 
     def __iter__(self):
         return (e.name for e in self._tree)
@@ -105,13 +118,19 @@ class Tree(object):
     def keys(self):
         return list(self)
 
+    def values(self):
+        return [self[k] for k in self]
+
     def __len__(self):
         return sum(1 for _ in iter(self))
 
     def __eq__(self, other):
         if type(other) == type(self):
-            return self._tree.oid == other._tree.oid
+            return self.oid == other.oid
         return False
+
+    def __repr__(self):
+        return '<gitly.Tree @ %s>' % self.oid
 
 
 def flatten_tree(tree, prefix=()):
@@ -131,11 +150,11 @@ def dict_diff(dict1, dict2):
     Combine a dictionary, discarding entries that are the same
     in both left and right
     """
-    tooid = lambda o: o.oid if o else None
     for key in set(dict1.keys() + dict2.keys()):
         item1 = dict1.get(key)
         item2 = dict2.get(key)
-        if tooid(item1) != tooid(item2):
+        if (item1 and item2 and item1.oid == item2.oid
+           or item1 == item2):
             yield (key, (item1, item2))
 
 
@@ -156,11 +175,11 @@ class Branch(object):
     cecil = pygit2.Signature('Cecil Committer', 'cecil@committers.tld')
 
     def __init__(self, repo, branch_name):
-        self.ref_name = branch_name
+        self.ref_name = 'refs/heads/' + branch_name
         self.repo = repo
         try:
             ref = repo.lookup_reference(self.ref_name)
-            _tree = ref.peel().tree
+            _tree = ref.get_object().tree
         except (ValueError, KeyError):
             # The empty tree
             _tree = empty_tree(repo)
@@ -181,6 +200,9 @@ class Branch(object):
             out = out.get(part)
         return out
 
+    def get(self, path, default=Tree._ERROR):
+        return self.tree.get(path, default)
+
     def __setitem__(self, path, value):
         self.tree = self.tree.set(path, value)
 
@@ -188,12 +210,24 @@ class Branch(object):
         self[path] = None
 
     def commit(self, msg, author=alice, committer=cecil):
-        ref = self.repo.lookup_reference(self.ref_name)
-        parent = ref.peel().id
-        self.repo.create_commit( self.ref_name
-                               , author
-                               , committer
-                               , msg
-                               , self.tree._tree.oid
-                               , [parent]
-                               )
+        try:
+            ref = self.repo.lookup_reference(self.ref_name)
+            parents = [ref.get_object().oid]
+        except KeyError:
+            parents = []
+        self.repo.create_commit(self.ref_name, author, committer, msg,
+                                self.tree._tree.oid, parents)
+
+    def __repr__(self):
+        return '<gitly.Branch @ %s>' % self.ref_name
+
+
+# class LensedBranch(Branch):
+#     def __init__(self, prefix, branch):
+#         self.branch = branch
+#         self.prefix = prefix
+#         self.tree = branch[prefix]
+#
+#     def commit(self, *args, **kwargs):
+#         self.branch[self.prefix] = self.tree
+#         self.branch.commit(*args, **kwargs)

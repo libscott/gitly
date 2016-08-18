@@ -49,9 +49,9 @@ class TestTree(unittest.TestCase):
 
     def test_set_subdir(self):
         tree = (Tree(self.repo)
-                .set('a/b/c', '1')
-                .set('a/c/d', '2')
-                .set('a/c/b', '3'))
+                .set('a/b/c/d', '1')
+                .set('a/c/d/e', '2')
+                .set('a/c/b/d', '3'))
         self.assertEqual({'a': {'b': {'c': '1'}, 'c': {'b': '3', 'd': '2'}}},
                          dump_tree(tree))
 
